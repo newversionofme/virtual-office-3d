@@ -1,0 +1,10 @@
+{
+  "name": "hermes-virtual-office-3d",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start:server": "cd server && npm start",
+    "start:client": "cd client && npm run dev",
+    "build:client": "cd client && npm run build"
+  }
+}
