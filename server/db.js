@@ -6,14 +6,11 @@ const fs = require('fs');
 const kanbanDbPath = path.join(os.homedir(), '.hermes', 'kanban.db');
 const stateDbPath = path.join(os.homedir(), '.hermes', 'state.db');
 
-console.log(`[DB] Kanban DB: ${kanbanDbPath}`);
-console.log(`[DB] State DB: ${stateDbPath}`);
-
 function runQueryJson(dbPath, sql) {
   try {
     if (!fs.existsSync(dbPath)) return [];
     const cmd = `sqlite3 -json "${dbPath}" "${sql.replace(/"/g, '\\"')}"`;
-    const result = execSync(cmd, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+    const result = execSync(cmd, { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 });
     if (!result || !result.trim()) return [];
     return JSON.parse(result);
   } catch (err) {
@@ -33,14 +30,13 @@ function executeSql(dbPath, sql) {
   }
 }
 
-// Color palette and role metadata map for real Hermes agent sessions
 const KNOWN_HERMES_PROFILES = {
   'ev-content-tele': {
     name: 'ev-content-tele',
-    role: 'Telegram Content Creator',
+    role: 'Telegram Content Creator (Liliana)',
     platform: 'Telegram Bot',
     model: 'Gemini 3.7 Flash',
-    color: '#ec4899', // Pink
+    color: '#ec4899',
     initial: 'CT'
   },
   'ev-slicing-tele': {
@@ -48,7 +44,7 @@ const KNOWN_HERMES_PROFILES = {
     role: 'Telegram UI Slicer',
     platform: 'Telegram Bot',
     model: 'Gemini 3.7 Flash',
-    color: '#06b6d4', // Cyan
+    color: '#06b6d4',
     initial: 'ST'
   },
   'ev-slicing-agent': {
@@ -56,7 +52,7 @@ const KNOWN_HERMES_PROFILES = {
     role: 'CLI Frontend Architect',
     platform: 'CLI Terminal',
     model: 'Gemini 3.7 Flash',
-    color: '#6366f1', // Indigo
+    color: '#6366f1',
     initial: 'SA'
   },
   'agen-konten-super': {
@@ -64,7 +60,7 @@ const KNOWN_HERMES_PROFILES = {
     role: 'Super Content Strategist',
     platform: 'CLI Terminal',
     model: 'Gemini 3.7 Flash',
-    color: '#f59e0b', // Amber
+    color: '#f59e0b',
     initial: 'KS'
   },
   'hermes-gateway': {
@@ -72,7 +68,7 @@ const KNOWN_HERMES_PROFILES = {
     role: 'Telegram & Socket Dispatcher',
     platform: 'Gateway Daemon',
     model: 'Supervisor Core',
-    color: '#10b981', // Emerald
+    color: '#10b981',
     initial: 'GW'
   },
   'hermes-dashboard': {
@@ -80,17 +76,56 @@ const KNOWN_HERMES_PROFILES = {
     role: 'Metrics & Web Portal (9119)',
     platform: 'Web Daemon',
     model: 'Dashboard Core',
-    color: '#8b5cf6', // Violet
+    color: '#8b5cf6',
     initial: 'DB'
   }
 };
 
-// Function to get real Hermes agents from state.db & processes
+// Function to fetch chat history for a specific agent / session
+function getAgentChatHistory(sessionIdOrTitle) {
+  if (!sessionIdOrTitle) return [];
+
+  let query = `
+    SELECT m.id, m.session_id, m.role, m.content, m.timestamp, m.tool_name, m.tool_calls
+    FROM messages m
+    JOIN sessions s ON m.session_id = s.id
+    WHERE s.id = '${sessionIdOrTitle}' OR s.title = '${sessionIdOrTitle}'
+    ORDER BY m.timestamp ASC;
+  `;
+
+  const rows = runQueryJson(stateDbPath, query);
+  
+  return (rows || []).map(r => {
+    // Analyze message for issues/obstacles
+    let isError = false;
+    let errorDetail = null;
+
+    if (r.role === 'assistant' && r.content) {
+      if (r.content.includes('not processed') || r.content.includes('Error') || r.content.includes('failed')) {
+        isError = true;
+        errorDetail = r.content;
+      }
+    }
+
+    return {
+      id: r.id,
+      sessionId: r.session_id,
+      role: r.role,
+      content: r.content || '',
+      timestamp: r.timestamp ? Math.floor(r.timestamp * 1000) : null,
+      toolName: r.tool_name,
+      toolCalls: r.tool_calls,
+      isError,
+      errorDetail
+    };
+  });
+}
+
+// Function to get real Hermes agents with rich status & obstacle detection
 function getRealHermesAgents() {
   const agents = [];
   const addedIds = new Set();
 
-  // 1. Read sessions from state.db
   const sessionRows = runQueryJson(
     stateDbPath,
     "SELECT id, source, title, model, last_activity_at, message_count FROM sessions WHERE title IS NOT NULL AND title != '' ORDER BY started_at DESC;"
@@ -105,6 +140,32 @@ function getRealHermesAgents() {
     const initials = meta.initial || agentId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 2).toUpperCase() || 'AG';
     const cleanModel = (row.model || 'gemini/gemini-3.7-flash').replace('gemini/', '').toUpperCase();
 
+    // Fetch last user message (what was assigned) and last assistant message (result / obstacle)
+    const recentMsgs = runQueryJson(
+      stateDbPath,
+      `SELECT role, content, timestamp, tool_name FROM messages WHERE session_id = '${row.id}' ORDER BY timestamp DESC LIMIT 6;`
+    );
+
+    let latestUserPrompt = null;
+    let latestAssistantReply = null;
+    let detectedIssue = null;
+    let activeTool = null;
+
+    (recentMsgs || []).forEach(m => {
+      if (m.role === 'user' && !latestUserPrompt) {
+        latestUserPrompt = { content: m.content, timestamp: m.timestamp ? Math.floor(m.timestamp * 1000) : null };
+      }
+      if (m.role === 'assistant' && !latestAssistantReply) {
+        latestAssistantReply = { content: m.content, timestamp: m.timestamp ? Math.floor(m.timestamp * 1000) : null };
+        if (m.content && (m.content.includes('not processed') || m.content.toLowerCase().includes('error'))) {
+          detectedIssue = m.content;
+        }
+      }
+      if (m.role === 'tool' && !activeTool) {
+        activeTool = m.tool_name;
+      }
+    });
+
     agents.push({
       id: agentId,
       name: agentId,
@@ -114,12 +175,16 @@ function getRealHermesAgents() {
       color: meta.color || '#3b82f6',
       initial: initials,
       sessionId: row.id,
-      messageCount: row.message_count || 0,
-      lastActivity: row.last_activity_at ? Math.floor(row.last_activity_at) : null
+      messageCount: row.message_count || (recentMsgs ? recentMsgs.length : 0),
+      lastActivity: row.last_activity_at ? Math.floor(row.last_activity_at * 1000) : null,
+      latestUserPrompt,
+      latestAssistantReply,
+      detectedIssue,
+      activeTool
     });
   });
 
-  // 2. Add System Daemons (Gateway & Dashboard)
+  // Add System Daemons (Gateway & Dashboard)
   ['hermes-gateway', 'hermes-dashboard'].forEach(sysKey => {
     const meta = KNOWN_HERMES_PROFILES[sysKey];
     if (!addedIds.has(meta.name)) {
@@ -134,7 +199,11 @@ function getRealHermesAgents() {
         initial: meta.initial,
         sessionId: null,
         messageCount: 0,
-        lastActivity: Math.floor(Date.now() / 1000)
+        lastActivity: Date.now(),
+        latestUserPrompt: null,
+        latestAssistantReply: null,
+        detectedIssue: null,
+        activeTool: null
       });
     }
   });
@@ -142,98 +211,54 @@ function getRealHermesAgents() {
   return agents;
 }
 
-// Sync/seed real tasks for user's Hermes agents if needed
-function syncRealHermesTasks() {
-  // Ensure tasks table exists
-  executeSql(kanbanDbPath, `
-    CREATE TABLE IF NOT EXISTS tasks (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      body TEXT,
-      status TEXT NOT NULL DEFAULT 'todo',
-      assignee TEXT,
-      created_by TEXT DEFAULT 'virtual-office',
-      created_at INTEGER NOT NULL,
-      started_at INTEGER,
-      completed_at INTEGER
-    );
-  `);
-
-  // Check if dummy tasks exist and replace them with real agents' tasks
-  const existingTasks = runQueryJson(kanbanDbPath, "SELECT id, assignee FROM tasks;");
-  const hasDummy = (existingTasks || []).some(t => t.assignee && t.assignee.startsWith('Hermes-Alpha'));
-
-  if (hasDummy || existingTasks.length === 0) {
-    console.log('[DB] Updating kanban tasks to match real Hermes Agents on this machine...');
-    // Delete legacy placeholder tasks
-    executeSql(kanbanDbPath, "DELETE FROM tasks WHERE assignee IN ('Hermes-Alpha', 'Hermes-Beta', 'Hermes-Design', 'Hermes-Sentinel', 'Hermes-Ops', 'Hermes-Scholar');");
-
-    const now = Math.floor(Date.now() / 1000);
-    const realTasks = [
-      `INSERT INTO tasks (id, title, status, assignee, body, created_at, started_at) VALUES ('task-real-001', 'Generate TikTok/Reels Video Script & Voiceover Hook', 'in_progress', 'ev-content-tele', 'Producing high-engagement short video scripts on AI productivity tools', ${now}, ${now});`,
-      `INSERT INTO tasks (id, title, status, assignee, body, created_at, started_at) VALUES ('task-real-002', 'Convert Figma Wireframe to Responsive Tailwind UI', 'in_progress', 'ev-slicing-tele', 'Interactive slicing for modern landing page sections and components', ${now}, ${now});`,
-      `INSERT INTO tasks (id, title, status, assignee, body, created_at, completed_at) VALUES ('task-real-003', 'Architect CLI Component Library & Design System', 'done', 'ev-slicing-agent', 'Built reusable React & Tailwind design tokens for CLI web dashboard', ${now}, ${now});`,
-      `INSERT INTO tasks (id, title, status, assignee, body, created_at, completed_at) VALUES ('task-real-004', 'Research 10 Viral Tech Content Trends for October', 'done', 'agen-konten-super', 'Ranked top tech topics from arXiv, Twitter AI, and ProductHunt', ${now}, ${now});`,
-      `INSERT INTO tasks (id, title, status, assignee, body, created_at, started_at) VALUES ('task-real-005', 'Maintain Telegram Bot Webhooks & Gateway Heartbeats', 'in_progress', 'Hermes-Gateway', 'Live connection with Telegram Bot (PID 24719) active and listening', ${now}, ${now});`,
-      `INSERT INTO tasks (id, title, status, assignee, body, created_at) VALUES ('task-real-006', 'Monitor Resource Usage & Session Turn Leases', 'todo', 'Hermes-Dashboard', 'Tracking token consumption and memory vector stores on port 9119', ${now});`
-    ];
-
-    realTasks.forEach(sql => executeSql(kanbanDbPath, sql));
-    console.log('[DB] Real Hermes tasks synchronized successfully.');
-  }
-}
-
-syncRealHermesTasks();
-
-const db = {
-  all: (query, params, callback) => {
-    try {
-      const rows = runQueryJson(kanbanDbPath, query);
-      callback(null, rows);
-    } catch (e) {
-      callback(e, []);
-    }
-  },
-  run: (query, params, callback) => {
-    try {
-      let formattedSql = query;
-      if (Array.isArray(params) && params.length > 0) {
-        params.forEach(p => {
-          const val = p === null ? 'NULL' : typeof p === 'number' ? p : `'${String(p).replace(/'/g, "''")}'`;
-          formattedSql = formattedSql.replace('?', val);
-        });
-      }
-      const success = executeSql(kanbanDbPath, formattedSql);
-      if (callback) callback.call({ changes: success ? 1 : 0 }, null);
-    } catch (e) {
-      if (callback) callback(e);
-    }
-  },
-  prepare: (query) => {
-    return {
-      run: (...args) => {
-        let callback = null;
-        let params = args;
-        if (typeof args[args.length - 1] === 'function') {
-          callback = args[args.length - 1];
-          params = args.slice(0, args.length - 1);
-        }
-        let formattedSql = query;
-        params.forEach(p => {
-          const val = p === null ? 'NULL' : typeof p === 'number' ? p : `'${String(p).replace(/'/g, "''")}'`;
-          formattedSql = formattedSql.replace('?', val);
-        });
-        executeSql(kanbanDbPath, formattedSql);
-        if (callback) callback(null);
-      },
-      finalize: () => {}
-    };
-  }
-};
-
 module.exports = {
-  db,
+  db: {
+    all: (query, params, callback) => {
+      try {
+        const rows = runQueryJson(kanbanDbPath, query);
+        callback(null, rows);
+      } catch (e) {
+        callback(e, []);
+      }
+    },
+    run: (query, params, callback) => {
+      try {
+        let formattedSql = query;
+        if (Array.isArray(params) && params.length > 0) {
+          params.forEach(p => {
+            const val = p === null ? 'NULL' : typeof p === 'number' ? p : `'${String(p).replace(/'/g, "''")}'`;
+            formattedSql = formattedSql.replace('?', val);
+          });
+        }
+        const success = executeSql(kanbanDbPath, formattedSql);
+        if (callback) callback.call({ changes: success ? 1 : 0 }, null);
+      } catch (e) {
+        if (callback) callback(e);
+      }
+    },
+    prepare: (query) => {
+      return {
+        run: (...args) => {
+          let callback = null;
+          let params = args;
+          if (typeof args[args.length - 1] === 'function') {
+            callback = args[args.length - 1];
+            params = args.slice(0, args.length - 1);
+          }
+          let formattedSql = query;
+          params.forEach(p => {
+            const val = p === null ? 'NULL' : typeof p === 'number' ? p : `'${String(p).replace(/'/g, "''")}'`;
+            formattedSql = formattedSql.replace('?', val);
+          });
+          executeSql(kanbanDbPath, formattedSql);
+          if (callback) callback(null);
+        },
+        finalize: () => {}
+      };
+    }
+  },
   getRealHermesAgents,
+  getAgentChatHistory,
   getDatabasePath: () => kanbanDbPath,
   getStateDbPath: () => stateDbPath
 };

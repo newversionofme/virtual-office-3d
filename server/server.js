@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const { db, getRealHermesAgents, getDatabasePath, getStateDbPath } = require('./db');
+const { db, getRealHermesAgents, getAgentChatHistory, getDatabasePath, getStateDbPath } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -10,13 +10,14 @@ app.use(express.json());
 
 let globalOfficeMode = 'normal'; // 'normal' | 'lunch' | 'work' | 'party' | 'paused'
 
-function normalizeStatus(rawStatus) {
+function normalizeStatus(rawStatus, detectedIssue) {
+  if (detectedIssue) return 'blocked';
   if (!rawStatus) return 'idle';
   const s = String(rawStatus).toLowerCase();
   if (s.includes('prog') || s === 'running' || s === 'active' || s === 'in_progress') return 'in_progress';
   if (s.includes('done') || s === 'completed' || s === 'finished') return 'done';
+  if (s.includes('block') || s === 'error' || s === 'crashed') return 'blocked';
   if (s.includes('todo') || s === 'triage' || s === 'pending' || s === 'ready') return 'todo';
-  if (s.includes('block')) return 'blocked';
   return 'idle';
 }
 
@@ -31,9 +32,10 @@ function determineFloor(status, agentId) {
       return 'FL.03'; // Workspace
     case 'done':
       return 'FL.04'; // Rooftop
+    case 'blocked':
+      return 'FL.03'; // Workspace (desk / troubleshooter)
     case 'todo':
     case 'idle':
-    case 'blocked':
     default:
       return 'FL.02'; // Kitchen & Lounge / Dining
   }
@@ -50,23 +52,20 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// GET /api/agents (Real-time dynamic detection from ~/.hermes/state.db & kanban.db)
+// GET /api/agents (Real-time dynamic detection from state.db & kanban.db)
 app.get('/api/agents', (req, res) => {
   try {
-    // 1. Fetch real agents from state.db
     const detectedAgents = getRealHermesAgents();
 
-    // 2. Fetch tasks from kanban.db
     db.all('SELECT * FROM tasks ORDER BY created_at DESC', [], (err, rows) => {
       const taskRows = rows || [];
-
-      // Map tasks to detected agents
       const agentMap = {};
+
       detectedAgents.forEach(ag => {
         agentMap[ag.id] = {
           ...ag,
-          status: 'idle',
-          floor: determineFloor('idle', ag.id),
+          status: ag.detectedIssue ? 'blocked' : 'idle',
+          floor: determineFloor(ag.detectedIssue ? 'blocked' : 'idle', ag.id),
           currentTask: null
         };
       });
@@ -76,7 +75,6 @@ app.get('/api/agents', (req, res) => {
         const assignee = row.assignee;
         if (!assignee) return;
 
-        // Find agent or match loosely
         let targetAgent = agentMap[assignee];
         if (!targetAgent) {
           const matchedKey = Object.keys(agentMap).find(k => 
@@ -88,7 +86,6 @@ app.get('/api/agents', (req, res) => {
         }
 
         if (!targetAgent) {
-          // New dynamic agent from kanban.db
           const initials = assignee.replace(/[^a-zA-Z0-9]/g, '').slice(0, 2).toUpperCase() || 'AG';
           targetAgent = {
             id: assignee,
@@ -101,12 +98,15 @@ app.get('/api/agents', (req, res) => {
             status: 'idle',
             floor: 'FL.02',
             currentTask: null,
-            lastActive: row.completed_at || row.started_at || row.created_at
+            lastActivity: row.completed_at ? row.completed_at * 1000 : row.started_at ? row.started_at * 1000 : row.created_at * 1000,
+            latestUserPrompt: null,
+            latestAssistantReply: null,
+            detectedIssue: null
           };
           agentMap[assignee] = targetAgent;
         }
 
-        const norm = normalizeStatus(row.status);
+        const norm = normalizeStatus(row.status, targetAgent.detectedIssue);
         if (!targetAgent.currentTask || norm === 'in_progress') {
           targetAgent.status = norm;
           targetAgent.currentTask = {
@@ -115,9 +115,9 @@ app.get('/api/agents', (req, res) => {
             description: row.body || '',
             status: row.status,
             normalizedStatus: norm,
-            createdAt: row.created_at,
-            startedAt: row.started_at,
-            completedAt: row.completed_at
+            createdAt: row.created_at ? row.created_at * 1000 : null,
+            startedAt: row.started_at ? row.started_at * 1000 : null,
+            completedAt: row.completed_at ? row.completed_at * 1000 : null
           };
           targetAgent.floor = determineFloor(norm, targetAgent.id);
         }
@@ -133,6 +133,23 @@ app.get('/api/agents', (req, res) => {
     });
   } catch (err) {
     console.error('[API /api/agents Error]:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/agents/:id/history (Get full real conversation chat history for an agent)
+app.get('/api/agents/:id/history', (req, res) => {
+  try {
+    const { id } = req.params;
+    const history = getAgentChatHistory(id);
+    res.json({
+      success: true,
+      agentId: id,
+      count: history.length,
+      history: history
+    });
+  } catch (err) {
+    console.error('[API History Error]:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -160,7 +177,7 @@ app.post('/api/tasks', (req, res) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json({
       success: true,
-      task: { id, title, body: description, status, assignee, created_at: now, started_at: started, completed_at: completed }
+      task: { id, title, body: description, status, assignee, created_at: now * 1000, started_at: started ? started * 1000 : null, completed_at: completed ? completed * 1000 : null }
     });
   });
   stmt.finalize();
@@ -204,5 +221,4 @@ app.post('/api/mode', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`[SERVER] Virtual Office 3D Backend running on http://localhost:${PORT}`);
-  console.log(`[SERVER] Connected to Real Hermes DBs`);
 });
