@@ -1,23 +1,23 @@
 import React from 'react';
-import { X, Bot, Activity, MapPin, Zap, CheckCircle2, Clock, Calendar } from 'lucide-react';
+import { X, Bot, Activity, MapPin, Zap, CheckCircle2, Send, Terminal, Cpu, MessageSquare } from 'lucide-react';
 
 export function AgentDetailModal({ agent, onClose, onUpdateStatus }) {
   if (!agent) return null;
 
   return (
-    <div className="fixed right-6 top-6 bottom-24 w-84 z-30 glass-panel rounded-2xl p-5 shadow-2xl border border-white/10 flex flex-col justify-between animate-fade-in pointer-events-auto">
-      <div className="flex flex-col gap-4">
+    <div className="fixed right-6 top-6 bottom-24 w-88 z-30 glass-panel rounded-2xl p-5 shadow-2xl border border-white/10 flex flex-col justify-between animate-fade-in pointer-events-auto overflow-y-auto">
+      <div className="flex flex-col gap-3.5">
         {/* Header with Close */}
         <div className="flex items-center justify-between border-b border-slate-700/60 pb-3">
           <div className="flex items-center gap-2.5">
             <div
-              className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm text-white shadow-lg"
+              className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm text-white shadow-lg flex-shrink-0"
               style={{ backgroundColor: agent.color || '#6366f1' }}
             >
               {agent.initial || 'AG'}
             </div>
-            <div>
-              <h3 className="text-sm font-bold text-white">{agent.name}</h3>
+            <div className="truncate">
+              <h3 className="text-sm font-bold text-white truncate">{agent.name}</h3>
               <p className="text-xs text-slate-400">{agent.role}</p>
             </div>
           </div>
@@ -29,18 +29,34 @@ export function AgentDetailModal({ agent, onClose, onUpdateStatus }) {
           </button>
         </div>
 
-        {/* Current Location & Status */}
+        {/* Real Hermes Metadata Grid */}
         <div className="grid grid-cols-2 gap-2 text-xs">
           <div className="bg-slate-900/60 p-2.5 rounded-xl border border-slate-800">
-            <span className="text-slate-400 text-[10px] block mb-1 flex items-center gap-1">
-              <MapPin className="w-3 h-3 text-indigo-400" /> Current Floor
+            <span className="text-slate-400 text-[10px] block mb-0.5 flex items-center gap-1">
+              <Cpu className="w-3 h-3 text-purple-400" /> Model Engine
+            </span>
+            <span className="font-bold text-slate-200 truncate block">
+              {agent.model || 'Gemini 3.7 Flash'}
+            </span>
+          </div>
+          <div className="bg-slate-900/60 p-2.5 rounded-xl border border-slate-800">
+            <span className="text-slate-400 text-[10px] block mb-0.5 flex items-center gap-1">
+              {agent.platform?.includes('Telegram') ? <Send className="w-3 h-3 text-sky-400" /> : <Terminal className="w-3 h-3 text-emerald-400" />} Platform
+            </span>
+            <span className="font-bold text-slate-200 truncate block">
+              {agent.platform || 'Hermes Core'}
+            </span>
+          </div>
+          <div className="bg-slate-900/60 p-2.5 rounded-xl border border-slate-800">
+            <span className="text-slate-400 text-[10px] block mb-0.5 flex items-center gap-1">
+              <MapPin className="w-3 h-3 text-indigo-400" /> 3D Floor
             </span>
             <span className="font-bold text-slate-200">
               {agent.floor === 'FL.04' ? 'FL.04 Rooftop' : agent.floor === 'FL.03' ? 'FL.03 Workspace' : 'FL.02 Kitchen'}
             </span>
           </div>
           <div className="bg-slate-900/60 p-2.5 rounded-xl border border-slate-800">
-            <span className="text-slate-400 text-[10px] block mb-1 flex items-center gap-1">
+            <span className="text-slate-400 text-[10px] block mb-0.5 flex items-center gap-1">
               <Activity className="w-3 h-3 text-cyan-400" /> Status
             </span>
             <span className="font-bold capitalize text-slate-200">
@@ -53,7 +69,7 @@ export function AgentDetailModal({ agent, onClose, onUpdateStatus }) {
         <div className="bg-slate-900/70 p-3.5 rounded-xl border border-slate-800 flex flex-col gap-2">
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-              Active Task
+              Active Kanban Task
             </span>
             {agent.currentTask && (
               <span className="text-[10px] font-mono text-slate-500">
@@ -75,12 +91,12 @@ export function AgentDetailModal({ agent, onClose, onUpdateStatus }) {
             </>
           ) : (
             <p className="text-xs text-slate-500 italic py-2">
-              No active task assigned. Agent is currently on standby.
+              No active task assigned. Agent is currently standby.
             </p>
           )}
         </div>
 
-        {/* Quick Action Buttons */}
+        {/* Quick Move Action Buttons */}
         {agent.currentTask && (
           <div className="flex flex-col gap-2">
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
@@ -113,8 +129,8 @@ export function AgentDetailModal({ agent, onClose, onUpdateStatus }) {
         )}
       </div>
 
-      <div className="pt-3 border-t border-slate-800 text-[10px] text-slate-500 text-center font-mono">
-        Hermes Autonomous Dispatcher v1.0
+      <div className="pt-3 border-t border-slate-800 text-[10px] text-slate-500 text-center font-mono mt-3">
+        Connected to ~/.hermes/state.db
       </div>
     </div>
   );
