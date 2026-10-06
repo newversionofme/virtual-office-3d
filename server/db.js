@@ -37,7 +37,9 @@ const KNOWN_HERMES_PROFILES = {
     platform: 'Telegram Bot',
     model: 'Gemini 3.7 Flash',
     color: '#ec4899',
-    initial: 'CT'
+    initial: 'CT',
+    followUp: 'Halo Bu Eva! Sudah beberapa waktu belum ada tugas naskah video baru. Mau saya buatkan 3 konsep konten viral tentang AI productivity tools untuk minggu ini?',
+    greeting: 'Halo Bu Eva! Saya Liliana, siap membuat naskah video TikTok/Reels, hook interaktif, dan voiceover TTS.'
   },
   'ev-slicing-tele': {
     name: 'ev-slicing-tele',
@@ -45,7 +47,9 @@ const KNOWN_HERMES_PROFILES = {
     platform: 'Telegram Bot',
     model: 'Gemini 3.7 Flash',
     color: '#06b6d4',
-    initial: 'ST'
+    initial: 'ST',
+    followUp: 'Halo Bu Eva! Apakah ada wireframe atau desain UI Figma baru yang ingin saya slice ke kode Tailwind CSS & React?',
+    greeting: 'Halo Bu Eva! Kirimkan instruksi layout atau komponen UI yang ingin saya bangun secara responsif.'
   },
   'ev-slicing-agent': {
     name: 'ev-slicing-agent',
@@ -53,7 +57,9 @@ const KNOWN_HERMES_PROFILES = {
     platform: 'CLI Terminal',
     model: 'Gemini 3.7 Flash',
     color: '#6366f1',
-    initial: 'SA'
+    initial: 'SA',
+    followUp: 'Halo Bu Eva! Arsitektur komponen web kita dalam kondisi stabil. Ada fitur baru atau refactor 3D yang perlu saya eksekusi?',
+    greeting: 'Siap Bu Eva! Saya Frontend Architect, siap menangani struktur kode, styling, dan integrasi komponen tingkat lanjut.'
   },
   'agen-konten-super': {
     name: 'agen-konten-super',
@@ -61,7 +67,9 @@ const KNOWN_HERMES_PROFILES = {
     platform: 'CLI Terminal',
     model: 'Gemini 3.7 Flash',
     color: '#f59e0b',
-    initial: 'KS'
+    initial: 'KS',
+    followUp: 'Halo Bu Eva! Saya menemukan 5 topik AI & tech inovatif yang trending di arXiv & ProductHunt hari ini. Mau saya rangkumkan?',
+    greeting: 'Halo Bu Eva! Mode hemat token aktif. Ketik "IDE" atau berikan topik, saya akan riset dan susunkan ide konten terbaik.'
   },
   'hermes-gateway': {
     name: 'Hermes-Gateway',
@@ -69,7 +77,9 @@ const KNOWN_HERMES_PROFILES = {
     platform: 'Gateway Daemon',
     model: 'Supervisor Core',
     color: '#10b981',
-    initial: 'GW'
+    initial: 'GW',
+    followUp: 'Gateway supervisor berjalan optimal. Socket koneksi Telegram dan channel lokal terpantau aktif tanpa downtime.',
+    greeting: 'Gateway Supervisor online. Memantau routing pesan dan background tasks.'
   },
   'hermes-dashboard': {
     name: 'Hermes-Dashboard',
@@ -77,7 +87,9 @@ const KNOWN_HERMES_PROFILES = {
     platform: 'Web Daemon',
     model: 'Dashboard Core',
     color: '#8b5cf6',
-    initial: 'DB'
+    initial: 'DB',
+    followUp: 'Port 9119 aktif. Semua metrik token dan session memory cache dalam ambang batas aman.',
+    greeting: 'Dashboard monitor online. Memantau resource leases dan turn health.'
   }
 };
 
@@ -96,7 +108,6 @@ function getAgentChatHistory(sessionIdOrTitle) {
   const rows = runQueryJson(stateDbPath, query);
   
   return (rows || []).map(r => {
-    // Analyze message for issues/obstacles
     let isError = false;
     let errorDetail = null;
 
@@ -121,6 +132,20 @@ function getAgentChatHistory(sessionIdOrTitle) {
   });
 }
 
+// Function to save a user or assistant message to state.db
+function saveMessageToStateDb(sessionId, role, content) {
+  if (!sessionId || !content) return;
+  const now = Date.now() / 1000;
+  const cleanContent = content.replace(/'/g, "''");
+  executeSql(stateDbPath, `
+    INSERT INTO messages (session_id, role, content, timestamp)
+    VALUES ('${sessionId}', '${role}', '${cleanContent}', ${now});
+  `);
+  executeSql(stateDbPath, `
+    UPDATE sessions SET last_activity_at = ${now}, message_count = message_count + 1 WHERE id = '${sessionId}';
+  `);
+}
+
 // Function to get real Hermes agents with rich status & obstacle detection
 function getRealHermesAgents() {
   const agents = [];
@@ -140,7 +165,6 @@ function getRealHermesAgents() {
     const initials = meta.initial || agentId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 2).toUpperCase() || 'AG';
     const cleanModel = (row.model || 'gemini/gemini-3.7-flash').replace('gemini/', '').toUpperCase();
 
-    // Fetch last user message (what was assigned) and last assistant message (result / obstacle)
     const recentMsgs = runQueryJson(
       stateDbPath,
       `SELECT role, content, timestamp, tool_name FROM messages WHERE session_id = '${row.id}' ORDER BY timestamp DESC LIMIT 6;`
@@ -177,6 +201,8 @@ function getRealHermesAgents() {
       sessionId: row.id,
       messageCount: row.message_count || (recentMsgs ? recentMsgs.length : 0),
       lastActivity: row.last_activity_at ? Math.floor(row.last_activity_at * 1000) : null,
+      followUp: meta.followUp || 'Halo Bu Eva! Ada tugas atau proyek baru yang ingin dikerjakan bersama hari ini?',
+      greeting: meta.greeting || 'Halo Bu Eva! Saya siap menerima tugas dan instruksi baru.',
       latestUserPrompt,
       latestAssistantReply,
       detectedIssue,
@@ -184,7 +210,7 @@ function getRealHermesAgents() {
     });
   });
 
-  // Add System Daemons (Gateway & Dashboard)
+  // Add System Daemons
   ['hermes-gateway', 'hermes-dashboard'].forEach(sysKey => {
     const meta = KNOWN_HERMES_PROFILES[sysKey];
     if (!addedIds.has(meta.name)) {
@@ -200,6 +226,8 @@ function getRealHermesAgents() {
         sessionId: null,
         messageCount: 0,
         lastActivity: Date.now(),
+        followUp: meta.followUp,
+        greeting: meta.greeting,
         latestUserPrompt: null,
         latestAssistantReply: null,
         detectedIssue: null,
@@ -259,6 +287,7 @@ module.exports = {
   },
   getRealHermesAgents,
   getAgentChatHistory,
+  saveMessageToStateDb,
   getDatabasePath: () => kanbanDbPath,
   getStateDbPath: () => stateDbPath
 };

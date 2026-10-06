@@ -1,13 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, 
   Bot, 
   Activity, 
-  MapPin, 
   Zap, 
   CheckCircle2, 
   Send, 
-  Terminal, 
   Cpu, 
   MessageSquare, 
   AlertTriangle, 
@@ -15,19 +13,30 @@ import {
   User, 
   Wrench,
   Sparkles,
-  Volume2,
-  RefreshCw
+  RefreshCw,
+  CornerDownLeft,
+  Lightbulb,
+  FileText
 } from 'lucide-react';
 
 export function AgentDetailModal({ agent, onClose, onUpdateStatus }) {
   const [activeTab, setActiveTab] = useState('chat'); // 'chat' | 'task' | 'diagnostics'
   const [history, setHistory] = useState([]);
+  const [inputMessage, setInputMessage] = useState('');
+  const [isSending, setIsSending] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const chatBottomRef = useRef(null);
 
   useEffect(() => {
     if (!agent) return;
     fetchHistory();
   }, [agent?.id, agent?.sessionId]);
+
+  useEffect(() => {
+    if (activeTab === 'chat') {
+      chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [history, activeTab]);
 
   const fetchHistory = async () => {
     setIsLoadingHistory(true);
@@ -45,6 +54,51 @@ export function AgentDetailModal({ agent, onClose, onUpdateStatus }) {
     }
   };
 
+  const handleSendMessage = async (e) => {
+    if (e) e.preventDefault();
+    if (!inputMessage.trim() || isSending) return;
+
+    const messageText = inputMessage.trim();
+    setInputMessage('');
+    setIsSending(true);
+
+    // Optimistically add user message to UI
+    const tempUserMsg = {
+      role: 'user',
+      content: messageText,
+      timestamp: Date.now()
+    };
+    setHistory(prev => [...prev, tempUserMsg]);
+
+    try {
+      const res = await fetch(`/api/agents/${encodeURIComponent(agent.id)}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: messageText })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        // Add assistant reply
+        const tempAssistantMsg = {
+          role: 'assistant',
+          content: data.assistantReply,
+          timestamp: Date.now() + 500
+        };
+        setHistory(prev => [...prev, tempAssistantMsg]);
+      }
+    } catch (err) {
+      console.error('Failed to send chat:', err);
+    } finally {
+      setIsSending(false);
+      setTimeout(fetchHistory, 1500);
+    }
+  };
+
+  const handleQuickPrompt = (promptText) => {
+    setInputMessage(promptText);
+  };
+
   if (!agent) return null;
 
   const hasIssues = agent.detectedIssue || history.some(m => m.isError);
@@ -56,7 +110,7 @@ export function AgentDetailModal({ agent, onClose, onUpdateStatus }) {
   };
 
   return (
-    <div className="fixed right-6 top-6 bottom-24 w-96 z-30 glass-panel rounded-2xl p-5 shadow-2xl border border-white/10 flex flex-col justify-between animate-fade-in pointer-events-auto">
+    <div className="fixed right-6 top-6 bottom-24 w-104 z-30 glass-panel rounded-2xl p-5 shadow-2xl border border-white/10 flex flex-col justify-between animate-fade-in pointer-events-auto">
       {/* Header */}
       <div className="flex flex-col gap-3 pb-3 border-b border-slate-700/60">
         <div className="flex items-center justify-between">
@@ -104,7 +158,7 @@ export function AgentDetailModal({ agent, onClose, onUpdateStatus }) {
             }`}
           >
             <Activity className="w-3.5 h-3.5" />
-            <span>Tugas</span>
+            <span>Tugas & Laporan</span>
           </button>
           <button
             onClick={() => setActiveTab('diagnostics')}
@@ -121,31 +175,57 @@ export function AgentDetailModal({ agent, onClose, onUpdateStatus }) {
       </div>
 
       {/* Tab Contents */}
-      <div className="flex-1 my-3 overflow-y-auto pr-1 flex flex-col gap-3">
-        {/* TAB 1: REAL CHAT HISTORY */}
+      <div className="flex-1 my-3 overflow-y-auto pr-1 flex flex-col gap-3 min-h-0">
+        {/* TAB 1: REAL-TIME INTERACTIVE CHAT */}
         {activeTab === 'chat' && (
-          <div className="flex flex-col gap-2.5">
-            <div className="flex items-center justify-between px-1 text-[11px] text-slate-400">
-              <span>Riwayat Percakapan Asli (~/.hermes)</span>
+          <div className="flex flex-col gap-2.5 flex-1">
+            {/* Proactive Follow-up Greeting Banner */}
+            {agent.followUp && (
+              <div className="bg-gradient-to-r from-amber-500/15 to-indigo-500/15 p-3 rounded-xl border border-amber-500/30 flex items-start gap-2 text-xs">
+                <Lightbulb className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <span className="font-bold text-amber-300 block text-[11px] mb-0.5">
+                    Follow-up dari {agent.name}:
+                  </span>
+                  <p className="text-slate-200 leading-relaxed text-[11px]">
+                    {agent.followUp}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Quick Prompt Chips */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-[10px] text-slate-300">
               <button
-                onClick={fetchHistory}
-                className="hover:text-white flex items-center gap-1 text-[10px]"
-                title="Refresh Riwayat"
+                onClick={() => handleQuickPrompt('Buatkan naskah video 60 detik')}
+                className="px-2.5 py-1 rounded-full bg-slate-800/80 hover:bg-slate-700 border border-slate-700 flex-shrink-0"
               >
-                <RefreshCw className={`w-3 h-3 ${isLoadingHistory ? 'animate-spin' : ''}`} />
-                <span>Refresh</span>
+                🎬 Naskah 60 Detik
+              </button>
+              <button
+                onClick={() => handleQuickPrompt('Berikan 5 ide konten viral')}
+                className="px-2.5 py-1 rounded-full bg-slate-800/80 hover:bg-slate-700 border border-slate-700 flex-shrink-0"
+              >
+                💡 5 Ide Konten
+              </button>
+              <button
+                onClick={() => handleQuickPrompt('Buatkan laporan progres tugas terakhir')}
+                className="px-2.5 py-1 rounded-full bg-slate-800/80 hover:bg-slate-700 border border-slate-700 flex-shrink-0"
+              >
+                📊 Laporan Progres
               </button>
             </div>
 
-            {isLoadingHistory ? (
+            {/* Message Thread */}
+            {isLoadingHistory && history.length === 0 ? (
               <div className="py-12 flex flex-col items-center justify-center gap-2 text-slate-400 text-xs">
                 <RefreshCw className="w-5 h-5 animate-spin text-indigo-400" />
-                <span>Memuat riwayat chat dari state.db...</span>
+                <span>Memuat percakapan...</span>
               </div>
             ) : history.length === 0 ? (
               <div className="py-12 text-center text-slate-500 text-xs bg-slate-900/40 rounded-xl p-4 border border-slate-800">
                 <MessageSquare className="w-6 h-6 mx-auto mb-2 text-slate-600 opacity-50" />
-                Belum ada riwayat pesan langsung yang tercatat untuk sesi ini.
+                Ketik pesan atau instruksi di bawah untuk mulai berdiskusi dengan {agent.name}.
               </div>
             ) : (
               history.map((msg, idx) => {
@@ -161,7 +241,7 @@ export function AgentDetailModal({ agent, onClose, onUpdateStatus }) {
                     <div className="flex items-center gap-1 text-[10px] text-slate-400 px-1">
                       {isUser ? (
                         <>
-                          <span>Anda (Tugas/Input)</span>
+                          <span>Anda (Bu Eva)</span>
                           <User className="w-3 h-3 text-sky-400" />
                         </>
                       ) : isTool ? (
@@ -183,7 +263,7 @@ export function AgentDetailModal({ agent, onClose, onUpdateStatus }) {
                     </div>
 
                     <div
-                      className={`p-3 rounded-2xl max-w-[92%] leading-relaxed break-words whitespace-pre-wrap ${
+                      className={`p-3 rounded-2xl max-w-[94%] leading-relaxed break-words whitespace-pre-wrap ${
                         isUser
                           ? 'bg-gradient-to-r from-indigo-600 to-indigo-700 text-white shadow-md rounded-tr-none'
                           : msg.isError
@@ -205,14 +285,22 @@ export function AgentDetailModal({ agent, onClose, onUpdateStatus }) {
                 );
               })
             )}
+
+            {isSending && (
+              <div className="flex items-center gap-2 text-xs text-sky-400 p-2 bg-sky-950/30 rounded-xl border border-sky-900/50">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>{agent.name} sedang memproses dan menulis laporan...</span>
+              </div>
+            )}
+            <div ref={chatBottomRef} />
           </div>
         )}
 
-        {/* TAB 2: TASK & PROMPT DETAILS */}
+        {/* TAB 2: TASK & PROGRESS REPORT */}
         {activeTab === 'task' && (
           <div className="flex flex-col gap-3">
             {/* Status Card */}
-            <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800 flex flex-col gap-2">
+            <div className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800 flex flex-col gap-2">
               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                 Status Pekerjaan Saat Ini
               </span>
@@ -230,22 +318,22 @@ export function AgentDetailModal({ agent, onClose, onUpdateStatus }) {
               </div>
             </div>
 
-            {/* Assigned Prompt / Instruction */}
-            <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800 flex flex-col gap-2">
+            {/* Latest Task / Instruction */}
+            <div className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800 flex flex-col gap-2">
               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
-                <User className="w-3.5 h-3.5 text-sky-400" /> Instruksi / Tugas Terakhir
+                <FileText className="w-3.5 h-3.5 text-sky-400" /> Instruksi / Tugas Terakhir
               </span>
               {agent.currentTask ? (
                 <>
                   <h4 className="text-xs font-bold text-slate-100">{agent.currentTask.title}</h4>
                   {agent.currentTask.description && (
-                    <p className="text-[11px] text-slate-300 leading-relaxed bg-slate-950/60 p-2 rounded-lg border border-slate-800">
+                    <p className="text-[11px] text-slate-300 leading-relaxed bg-slate-950/60 p-2.5 rounded-lg border border-slate-800 whitespace-pre-wrap">
                       {agent.currentTask.description}
                     </p>
                   )}
                 </>
               ) : agent.latestUserPrompt ? (
-                <p className="text-[11px] text-slate-300 leading-relaxed bg-slate-950/60 p-2 rounded-lg border border-slate-800">
+                <p className="text-[11px] text-slate-300 leading-relaxed bg-slate-950/60 p-2.5 rounded-lg border border-slate-800">
                   {agent.latestUserPrompt.content}
                 </p>
               ) : (
@@ -253,11 +341,11 @@ export function AgentDetailModal({ agent, onClose, onUpdateStatus }) {
               )}
             </div>
 
-            {/* Quick Actions to Change Floor/Status */}
+            {/* Quick Status Toggler */}
             {agent.currentTask && (
               <div className="flex flex-col gap-2 pt-1">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Ubah Status & Pindahkan Lokasi 3D
+                  Ubah Lokasi Lantai 3D
                 </span>
                 <div className="grid grid-cols-2 gap-2">
                   <button
@@ -287,7 +375,7 @@ export function AgentDetailModal({ agent, onClose, onUpdateStatus }) {
           </div>
         )}
 
-        {/* TAB 3: DIAGNOSTICS & KENDALA */}
+        {/* TAB 3: DIAGNOSTICS & OBSTACLES */}
         {activeTab === 'diagnostics' && (
           <div className="flex flex-col gap-3">
             {hasIssues ? (
@@ -302,9 +390,9 @@ export function AgentDetailModal({ agent, onClose, onUpdateStatus }) {
                 <div className="mt-1 text-[11px] text-slate-300">
                   <span className="font-semibold text-amber-300 block mb-1">Saran Perbaikan:</span>
                   <ul className="list-disc list-inside space-y-1 text-slate-400 text-[10px]">
+                    <li>Kirim ulang instruksi via kolom chat di bawah.</li>
                     <li>Pastikan gateway Hermes aktif (`hermes gateway start`).</li>
-                    <li>Cek koneksi internet atau ketersediaan model API Gemini.</li>
-                    <li>Kirim ulang instruksi via Telegram atau CLI.</li>
+                    <li>Model engine: {agent.model || 'GEMINI-3.7-FLASH'}.</li>
                   </ul>
                 </div>
               </div>
@@ -313,7 +401,7 @@ export function AgentDetailModal({ agent, onClose, onUpdateStatus }) {
                 <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0" />
                 <div>
                   <span className="font-bold block">Semua Berjalan Lancar</span>
-                  <span className="text-[10px] text-slate-400">Tidak ada error atau kendala pada sesi agent ini.</span>
+                  <span className="text-[10px] text-slate-400">Tidak ada kendala pada agent ini.</span>
                 </div>
               </div>
             )}
@@ -342,10 +430,29 @@ export function AgentDetailModal({ agent, onClose, onUpdateStatus }) {
         )}
       </div>
 
-      {/* Footer */}
-      <div className="pt-2.5 border-t border-slate-800 text-[10px] text-slate-500 text-center font-mono">
-        Hermes Live State Matrix
-      </div>
+      {/* Interactive Chat Input Bar at Bottom */}
+      <form onSubmit={handleSendMessage} className="pt-2 border-t border-slate-700/60 flex items-center gap-2">
+        <input
+          type="text"
+          placeholder={`Beri tugas / ngobrol dengan ${agent.name}...`}
+          value={inputMessage}
+          onChange={(e) => setInputMessage(e.target.value)}
+          disabled={isSending}
+          className="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-700 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors disabled:opacity-50"
+        />
+        <button
+          type="submit"
+          disabled={isSending || !inputMessage.trim()}
+          className="p-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:opacity-95 disabled:opacity-40 transition-all shadow-md shadow-indigo-600/30 flex items-center justify-center"
+          title="Kirim Perintah"
+        >
+          {isSending ? (
+            <RefreshCw className="w-4 h-4 animate-spin" />
+          ) : (
+            <Send className="w-4 h-4" />
+          )}
+        </button>
+      </form>
     </div>
   );
 }
