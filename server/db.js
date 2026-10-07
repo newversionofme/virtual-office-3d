@@ -30,6 +30,43 @@ function executeSql(dbPath, sql) {
   }
 }
 
+// Ensure agent customizations table exists
+executeSql(kanbanDbPath, `
+  CREATE TABLE IF NOT EXISTS agent_customizations (
+    agent_id TEXT PRIMARY KEY,
+    display_name TEXT,
+    avatar_url TEXT,
+    updated_at INTEGER
+  );
+`);
+
+function getAgentCustomizations() {
+  const rows = runQueryJson(kanbanDbPath, "SELECT agent_id, display_name, avatar_url FROM agent_customizations;");
+  const map = {};
+  (rows || []).forEach(r => {
+    map[r.agent_id] = {
+      displayName: r.display_name,
+      avatarUrl: r.avatar_url
+    };
+  });
+  return map;
+}
+
+function saveAgentCustomization(agentId, displayName, avatarUrl) {
+  if (!agentId) return false;
+  const now = Math.floor(Date.now() / 1000);
+  const cleanName = (displayName || '').replace(/'/g, "''").slice(0, 30);
+  const cleanAvatar = (avatarUrl || '').replace(/'/g, "''");
+  return executeSql(kanbanDbPath, `
+    INSERT INTO agent_customizations (agent_id, display_name, avatar_url, updated_at)
+    VALUES ('${agentId}', '${cleanName}', '${cleanAvatar}', ${now})
+    ON CONFLICT(agent_id) DO UPDATE SET
+      display_name = excluded.display_name,
+      avatar_url = excluded.avatar_url,
+      updated_at = excluded.updated_at;
+  `);
+}
+
 const KNOWN_HERMES_PROFILES = {
   'ev-content-tele': {
     name: 'ev-content-tele',
@@ -156,13 +193,18 @@ function getRealHermesAgents() {
     "SELECT id, source, title, model, last_activity_at, message_count FROM sessions WHERE title IS NOT NULL AND title != '' ORDER BY started_at DESC;"
   );
 
+  const customizations = getAgentCustomizations();
+
   (sessionRows || []).forEach((row) => {
     const agentId = row.title.trim();
     if (addedIds.has(agentId)) return;
     addedIds.add(agentId);
 
     const meta = KNOWN_HERMES_PROFILES[agentId.toLowerCase()] || {};
-    const initials = meta.initial || agentId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 2).toUpperCase() || 'AG';
+    const custom = customizations[agentId] || {};
+    const displayName = custom.displayName || agentId;
+    const avatarUrl = custom.avatarUrl || null;
+    const initials = meta.initial || displayName.replace(/[^a-zA-Z0-9]/g, '').slice(0, 2).toUpperCase() || 'AG';
     const cleanModel = (row.model || 'gemini/gemini-3.7-flash').replace('gemini/', '').toUpperCase();
 
     const recentMsgs = runQueryJson(
@@ -193,6 +235,8 @@ function getRealHermesAgents() {
     agents.push({
       id: agentId,
       name: agentId,
+      displayName: displayName,
+      avatarUrl: avatarUrl,
       role: meta.role || (row.source === 'telegram' ? 'Telegram Agent' : 'CLI Specialist'),
       platform: row.source === 'telegram' ? 'Telegram Bot' : 'CLI Terminal',
       model: cleanModel,
@@ -215,9 +259,14 @@ function getRealHermesAgents() {
     const meta = KNOWN_HERMES_PROFILES[sysKey];
     if (!addedIds.has(meta.name)) {
       addedIds.add(meta.name);
+      const custom = customizations[meta.name] || {};
+      const displayName = custom.displayName || meta.name;
+      const avatarUrl = custom.avatarUrl || null;
       agents.push({
         id: meta.name,
         name: meta.name,
+        displayName: displayName,
+        avatarUrl: avatarUrl,
         role: meta.role,
         platform: meta.platform,
         model: meta.model,
@@ -288,6 +337,7 @@ module.exports = {
   getRealHermesAgents,
   getAgentChatHistory,
   saveMessageToStateDb,
+  saveAgentCustomization,
   getDatabasePath: () => kanbanDbPath,
   getStateDbPath: () => stateDbPath
 };

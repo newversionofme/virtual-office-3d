@@ -203,7 +203,7 @@ export function AgentAvatar({ agent, index, isSelected, onClick, isPaused }) {
           anchorY="middle"
           fontWeight="bold"
         >
-          {agent.name.replace('Hermes-', '')}
+          {(agent.displayName || agent.name || 'Agent').replace('Hermes-', '').slice(0, 16)}
         </Text>
 
         {/* Status Subtitle */}

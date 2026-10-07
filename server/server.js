@@ -1,10 +1,9 @@
-const express = require('express');
-const cors = require('cors');
 const { 
   db, 
   getRealHermesAgents, 
   getAgentChatHistory, 
   saveMessageToStateDb, 
+  saveAgentCustomization,
   getDatabasePath, 
   getStateDbPath 
 } = require('./db');
@@ -13,7 +12,7 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 let globalOfficeMode = 'normal'; // 'normal' | 'lunch' | 'work' | 'party' | 'paused'
 
@@ -238,6 +237,28 @@ app.post('/api/agents/:id/chat', async (req, res) => {
     });
   } catch (err) {
     console.error('[API Chat Error]:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/agents/:id/profile (Update custom display name & photo)
+app.patch('/api/agents/:id/profile', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { displayName, avatarUrl } = req.body;
+    if (!displayName || !displayName.trim()) {
+      return res.status(400).json({ error: 'Nama tampilan wajib diisi (maks 30 karakter)' });
+    }
+    const cleanName = displayName.trim().slice(0, 30);
+    saveAgentCustomization(id, cleanName, avatarUrl || null);
+    res.json({
+      success: true,
+      agentId: id,
+      displayName: cleanName,
+      avatarUrl: avatarUrl || null
+    });
+  } catch (err) {
+    console.error('[API Profile Update Error]:', err);
     res.status(500).json({ error: err.message });
   }
 });

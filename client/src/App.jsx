@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { Layers } from 'lucide-react';
 import { OfficeScene } from './components/OfficeScene';
 import { ControlPanel } from './components/ControlPanel';
 import { AgentSidebar } from './components/AgentSidebar';
@@ -13,8 +14,7 @@ export default function App() {
   const [isAutoRotate, setIsAutoRotate] = useState(false);
   const [officeMode, setOfficeMode] = useState('normal'); // 'normal' | 'lunch' | 'work' | 'party'
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
-  const [dbPath, setDbPath] = useState('~/.hermes/kanban.db');
-  const [lastSyncTime, setLastSyncTime] = useState(Date.now());
+  const [dbPath, setDbPath] = useState('~/.hermes/state.db');
 
   // Fetch agent data from Express server
   const fetchAgents = useCallback(async () => {
@@ -26,7 +26,6 @@ export default function App() {
         if (data.globalMode) {
           setOfficeMode(data.globalMode);
         }
-        setLastSyncTime(Date.now());
       }
     } catch (err) {
       console.warn('[Sync] Failed to fetch /api/agents:', err.message);
@@ -78,6 +77,20 @@ export default function App() {
     }
   };
 
+  // Save customized agent name and photo permanently
+  const handleSaveProfile = async (agentId, displayName, avatarUrl) => {
+    const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/profile`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ displayName, avatarUrl })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Gagal menyimpan profil');
+    }
+    await fetchAgents();
+  };
+
   // Create new task in SQLite
   const handleCreateTask = async (taskData) => {
     try {
@@ -96,6 +109,36 @@ export default function App() {
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#070b14]">
+      {/* Top Floating Floor Switcher (Never overlaps chat drawer or bottom actions) */}
+      <div className="absolute top-4 sm:top-6 left-1/2 -translate-x-1/2 z-20">
+        <div className="glass-panel px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-xl text-xs font-semibold whitespace-nowrap">
+          <span className="text-slate-400 flex items-center gap-1 pl-1 pr-1.5 text-[11px]">
+            <Layers className="w-3.5 h-3.5 text-indigo-400" /> Lantai:
+          </span>
+          {[
+            { id: 'ALL', label: 'Semua' },
+            { id: 'FL.04', label: 'FL.04 Rooftop', color: 'hover:text-emerald-400' },
+            { id: 'FL.03', label: 'FL.03 Workspace', color: 'hover:text-indigo-400' },
+            { id: 'FL.02', label: 'FL.02 Kitchen', color: 'hover:text-amber-400' }
+          ].map((f) => {
+            const isActive = activeFloor === f.id;
+            return (
+              <button
+                key={f.id}
+                onClick={() => setActiveFloor(f.id)}
+                className={`px-3 py-1.5 min-h-[36px] rounded-full transition-all duration-200 text-xs ${
+                  isActive
+                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30 font-bold'
+                    : 'text-slate-300 hover:bg-slate-800/80 ' + (f.color || '')
+                }`}
+              >
+                {f.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* 3D Isometric Viewport */}
       <OfficeScene
         agents={agents}
@@ -121,10 +164,11 @@ export default function App() {
           agent={selectedAgent}
           onClose={() => setSelectedAgent(null)}
           onUpdateStatus={handleUpdateTaskStatus}
+          onSaveProfile={handleSaveProfile}
         />
       )}
 
-      {/* Bottom Interactive Toolbar */}
+      {/* Bottom Interactive Toolbar (Kantor Kita inspired with horizontal scroll on mobile) */}
       <ControlPanel
         isPaused={isPaused}
         onTogglePause={() => setIsPaused(!isPaused)}
@@ -132,8 +176,6 @@ export default function App() {
         currentMode={officeMode}
         isAutoRotate={isAutoRotate}
         onToggleAutoRotate={() => setIsAutoRotate(!isAutoRotate)}
-        activeFloor={activeFloor}
-        onSelectFloor={(floor) => setActiveFloor(floor)}
         onOpenNewTaskModal={() => setIsTaskModalOpen(true)}
       />
 
