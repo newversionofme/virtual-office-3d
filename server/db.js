@@ -195,17 +195,18 @@ function getRealHermesAgents() {
 
   const customizations = getAgentCustomizations();
 
+  // 1. Process active sessions from state.db
   (sessionRows || []).forEach((row) => {
     const agentId = row.title.trim();
-    if (addedIds.has(agentId)) return;
-    addedIds.add(agentId);
+    if (addedIds.has(agentId.toLowerCase())) return;
+    addedIds.add(agentId.toLowerCase());
 
     const meta = KNOWN_HERMES_PROFILES[agentId.toLowerCase()] || {};
-    const custom = customizations[agentId] || {};
-    const displayName = custom.displayName || agentId;
+    const custom = customizations[agentId] || customizations[agentId.toLowerCase()] || {};
+    const displayName = custom.displayName || meta.name || agentId;
     const avatarUrl = custom.avatarUrl || null;
     const initials = meta.initial || displayName.replace(/[^a-zA-Z0-9]/g, '').slice(0, 2).toUpperCase() || 'AG';
-    const cleanModel = (row.model || 'gemini/gemini-3.7-flash').replace('gemini/', '').toUpperCase();
+    const cleanModel = (row.model || meta.model || 'gemini/gemini-3.7-flash').replace('gemini/', '').toUpperCase();
 
     const recentMsgs = runQueryJson(
       stateDbPath,
@@ -234,11 +235,11 @@ function getRealHermesAgents() {
 
     agents.push({
       id: agentId,
-      name: agentId,
+      name: meta.name || agentId,
       displayName: displayName,
       avatarUrl: avatarUrl,
       role: meta.role || (row.source === 'telegram' ? 'Telegram Agent' : 'CLI Specialist'),
-      platform: row.source === 'telegram' ? 'Telegram Bot' : 'CLI Terminal',
+      platform: meta.platform || (row.source === 'telegram' ? 'Telegram Bot' : 'CLI Terminal'),
       model: cleanModel,
       color: meta.color || '#3b82f6',
       initial: initials,
@@ -254,14 +255,15 @@ function getRealHermesAgents() {
     });
   });
 
-  // Add System Daemons
-  ['hermes-gateway', 'hermes-dashboard'].forEach(sysKey => {
-    const meta = KNOWN_HERMES_PROFILES[sysKey];
-    if (!addedIds.has(meta.name)) {
-      addedIds.add(meta.name);
-      const custom = customizations[meta.name] || {};
+  // 2. Ensure all known Hermes agents are always seeded in the office
+  Object.keys(KNOWN_HERMES_PROFILES).forEach(key => {
+    if (!addedIds.has(key.toLowerCase())) {
+      addedIds.add(key.toLowerCase());
+      const meta = KNOWN_HERMES_PROFILES[key];
+      const custom = customizations[meta.name] || customizations[key] || {};
       const displayName = custom.displayName || meta.name;
       const avatarUrl = custom.avatarUrl || null;
+
       agents.push({
         id: meta.name,
         name: meta.name,
